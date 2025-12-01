@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amazon List Extractor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- PDF Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f7f9fb; }
+        /* Simple utility classes for status messages */
+        .status-success { background-color: #d1fae5; color: #065f46; border: 1px solid #34d399; }
+        .status-error { background-color: #fee2e2; color: #991b1b; border: 1px solid #f87171; }
+    </style>
+</head>
+<body class="p-4 sm:p-8 min-h-screen flex flex-col items-center">
+
+    <div class="w-full max-w-4xl bg-white p-6 sm:p-10 rounded-xl shadow-2xl border border-gray-100">
+
+        <header class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-extrabold text-gray-800 mb-2">Amazon List Data Extractor</h1>
+            <p class="text-gray-500">Paste the page source below to generate a data export.</p>
+        </header>
+
+        <!-- Instructions Section (UPDATED) -->
+        <div class="bg-indigo-50 p-4 rounded-lg mb-6 border border-indigo-200">
+            <h2 class="font-bold text-indigo-700 mb-2 flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                How to Use
+            </h2>
+            <ol class="list-decimal list-inside text-sm text-indigo-600 space-y-1">
+                <li>Go to the Amazon shopping list/wishlist page.</li>
+                <li>**CRITICAL:** Scroll completely to the bottom to ensure all items are loaded.</li>
+                <li>Right-click anywhere on the page, select "Inspect" to open Developer Tools.</li>
+                <li>In the "Elements" tab, find the main list container (div id="item-page-wrapper" class="a-section"), right-click it, and select **Copy** -> **Copy outerHTML**.</li>
+                <li>Paste the copied HTML into the text area below and click "Process List".</li>
+            </ol>
+        </div>
+
+        <!-- Input Area -->
+        <textarea id="htmlInput" rows="15" placeholder="Paste the full raw HTML source code of the Amazon list here..."
+            class="w-full p-4 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition duration-150 ease-in-out resize-y"></textarea>
+
+        <!-- Controls -->
+        <div class="mt-6 flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+            <button id="processButton"
+                class="w-full sm:w-1/3 bg-indigo-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 ease-in-out flex items-center justify-center disabled:opacity-50">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                Process List
+            </button>
+            <button id="downloadCsvButton" disabled
+                class="w-full sm:w-1/3 bg-green-500 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:bg-green-600 transition duration-150 ease-in-out flex items-center justify-center disabled:opacity-50">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                Download CSV
+            </button>
+            <button id="downloadPdfButton" disabled
+                class="w-full sm:w-1/3 bg-red-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:bg-red-700 transition duration-150 ease-in-out flex items-center justify-center disabled:opacity-50">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                Download PDF
+            </button>
+        </div>
+
+        <!-- Status & Results -->
+        <div id="statusMessage" class="mt-6 p-3 rounded-lg text-sm hidden" role="alert"></div>
+
+        <div id="resultsSummary" class="mt-6 hidden p-4 rounded-lg bg-gray-50 border border-gray-200">
+            <p class="font-semibold text-gray-700">Successfully extracted <span id="itemCount" class="font-bold text-indigo-600">0</span> items.</p>
+            <p class="font-semibold text-gray-700 mt-2 border-t pt-2 border-gray-300">Grand Total of List: <span id="totalPrice" class="font-bold text-green-700 text-lg">$0.00</span></p>
+        </div>
+
+    </div>
+
+    <script>
+        const htmlInput = document.getElementById('htmlInput');
+        const processButton = document.getElementById('processButton');
+        const downloadCsvButton = document.getElementById('downloadCsvButton');
+        const downloadPdfButton = document.getElementById('downloadPdfButton');
+        const statusMessage = document.getElementById('statusMessage');
+        const resultsSummary = document.getElementById('resultsSummary');
+        const itemCountSpan = document.getElementById('itemCount');
+        let extractedData = [];
+
+        // Utility function to display status messages
+        function showStatus(message, isError = false) {
+            statusMessage.textContent = message;
+            statusMessage.className = `mt-6 p-3 rounded-lg text-sm ${isError ? 'status-error' : 'status-success'}`;
+            statusMessage.classList.remove('hidden');
+        }
+
+        // --- Core Logic: HTML Parsing ---
+        function extractListItems(rawHtml) {
+            extractedData = [];
+            
+            // Use DOMParser to safely create a document from the HTML string
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(rawHtml, 'text/html');
+
+            // --- CRITICAL SELECTORS (Expanded to catch more item types) ---
+            const itemSelectors = [
+                'li[data-itemid]', 
+                'li[data-asin]', 
+                'div[data-itemid]', 
+                'div[data-asin]',
+                // Broader selectors for common Amazon list container classes
+                'li.g-item-sortable',
+                'li[id^="item_"]',
+                '.a-list-item[data-item-type="ASIN"]'
+            ];
+
+            const itemElements = doc.querySelectorAll(itemSelectors.join(', '));
+
+
+            if (itemElements.length === 0) {
+                showStatus('Error: Could not find any list items. Please ensure you copied the entire page source of a public shopping list.', true);
+                return [];
+            }
+
+            const amazonBaseUrl = 'https://www.amazon.com';
+            let grandTotal = 0; // Initialize grand total calculation
+
+            itemElements.forEach(itemEl => {
+                try {
+                    // 1. ASIN & Short URL
+                    let itemLink = itemEl.querySelector('a[href*="/dp/"]'); 
+                    
+                    let asin = itemEl.getAttribute('data-asin') || 
+                                (itemLink && itemLink.href.match(/\/dp\/([A-Z0-9]{10})/)?.[1]) || 
+                                '';
+                    
+                    let url = asin ? `${amazonBaseUrl}/dp/${asin}` : ''; 
+
+                    // 2. Item Name
+                    let itemNameEl = itemEl.querySelector('a[id^="itemName"], h2 a');
+                    let itemName = itemNameEl ? itemNameEl.textContent.trim() : 'N/A';
+
+                    // 3. Quantity 
+                    let quantity = 1; 
+
+                    // Priority A: Check if the main list item container has a data-quantity attribute
+                    if (itemEl.hasAttribute('data-quantity')) {
+                        quantity = parseInt(itemEl.getAttribute('data-quantity'), 10) || 1;
+                    } else {
+                        // Priority B: Search for specific quantity display elements
+                        let quantityEl = itemEl.querySelector(
+                            'span[id^="itemRequested_"], ' + 
+                            'span[id^="itemQuantity_"], ' + 
+                            'input[name="quantity"], ' +    
+                            'span.item-quantity-value, ' +  
+                            'span[id^="quantity_value"], ' + 
+                            '[data-action="quantity-update"] input.a-input-text' 
+                        );
+                        
+                        if (quantityEl) {
+                            let qtyText = (quantityEl.value || quantityEl.textContent).trim();
+                            let match = qtyText.match(/(\d+)/); 
+                            quantity = match ? parseInt(match[1], 10) : 1;
+                        } else {
+                            // Priority C: Fallback to searching the entire item text
+                            const itemText = itemEl.textContent;
+                            const textMatch = itemText.match(/(Quantity|Qty|Needed|Needs):\s*(\d+)/i);
+                            if (textMatch) {
+                                quantity = parseInt(textMatch[2], 10) || 1;
+                            }
+                        }
+                    }
+
+                    // 4. Unit Cost (Price) - *** ENHANCED PRICE EXTRACTION LOGIC ***
+                    let unitCost = 0;
+                    
+                    let priceEl = itemEl.querySelector(
+                        'span[id^="itemPrice_"], ' + 
+                        'span.a-price span.a-offscreen, ' + 
+                        'span.a-color-price' 
+                    );
+
+                    if (priceEl) {
+                        // Regex to safely extract the standard currency number pattern (e.g., 1,234.56 or 58.99)
+                        // This prevents non-numeric characters (like currency symbols, trailing text) from interfering.
+                        const priceMatch = priceEl.textContent.trim().match(/(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/);
+                        
+                        if (priceMatch && priceMatch[1]) {
+                            // 1. Capture the matched number string (e.g., "58.99" or "1,200.00")
+                            let priceString = priceMatch[1];
+                            
+                            // 2. Remove thousands comma for correct JavaScript parsing
+                            const sanitizedPrice = priceString.replace(/,/g, ''); 
+                            
+                            // 3. Convert to float, defaulting to 0
+                            unitCost = parseFloat(sanitizedPrice) || 0;
+                        } else {
+                            // Fallback for unexpected formats (less precise, but handles simple cases)
+                            const priceText = priceEl.textContent.trim().replace(/[^\d.]/g, '');
+                            unitCost = parseFloat(priceText) || 0;
+                        }
+                    }
+
+                    // 5. Subtotal Calculation
+                    const subtotal = unitCost * quantity;
+                    grandTotal += subtotal;
+
+
+                    if (itemName !== 'N/A' && asin) {
+                        extractedData.push({
+                            'Item Name': itemName,
+                            'URL': url,
+                            'ASIN Number': asin,
+                            'Quantity Needed': quantity,
+                            'Unit Cost': unitCost.toFixed(2), // Format to 2 decimal places
+                            'Subtotal': subtotal.toFixed(2)  // Format to 2 decimal places
+                        });
+                    }
+
+                } catch (e) {
+                    // console.error("Error processing item:", e, itemEl);
+                    // Skip items that fail to parse gracefully
+                }
+            });
+            
+            // Attach grand total to the result set for display in the UI
+            extractListItems.grandTotal = grandTotal;
+
+            return extractedData;
+        }
+        
+        // --- PDF Generation (UPDATED: Fixed double text bug using didParseCell) ---
+        function downloadPDF(data, total) {
+            // Retrieve jsPDF library from the window object
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('p', 'mm', 'a4'); // Portrait, mm units, A4 size
+            
+            // Title
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(18);
+            doc.text("Amazon Shopping List Export", 14, 20);
+
+            // Summary
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(10);
+            doc.text(`Total Items Extracted: ${data.length}`, 14, 28);
+            doc.text(`List Grand Total: $${total.toFixed(2)}`, 14, 34);
+
+            // Prepare table data
+            const headers = [
+                ['Item Name', 'ASIN', 'Qty', 'Unit Cost', 'Subtotal'] 
+            ];
+            
+            const body = data.map(item => [
+                item['Item Name'],
+                item['ASIN Number'], 
+                item['Quantity Needed'],
+                `$${item['Unit Cost']}`,
+                `$${item['Subtotal']}`
+            ]);
+
+            // Generate table using autoTable plugin
+            doc.autoTable({
+                startY: 40,
+                head: headers,
+                body: body,
+                theme: 'striped',
+                headStyles: { fillColor: [79, 70, 229] }, // indigo-600
+                styles: { fontSize: 8, overflow: 'linebreak' },
+                columnStyles: {
+                    // REDUCED Item Name width from 75 to 60 to definitively ensure the entire table fits on the page.
+                    0: { cellWidth: 100 }, // Item Name 
+                    1: { cellWidth: 25 }, // ASIN Number
+                    2: { halign: 'center', cellWidth: 15 }, // Qty
+                    3: { halign: 'right', cellWidth: 20 }, // Unit Cost
+                    4: { halign: 'right', cellWidth: 20 }  // Subtotal
+                },
+                
+                // Use didParseCell to set text color before drawing, preventing double draw
+                didParseCell: function (dataHook) {
+                    // Apply blue text color and underline-like effect to the Item Name column (index 0)
+                    if (dataHook.section === 'body' && dataHook.column.index === 0) {
+                        dataHook.cell.styles.textColor = [0, 0, 255]; // Blue text
+                        dataHook.cell.styles.fontStyle = 'normal'; // Resetting any default bold style
+                    }
+                },
+                
+                // Use didDrawCell ONLY to add the clickable link bounding box
+                didDrawCell: function (dataHook) {
+                    // Apply link bounding box to the Item Name column (index 0)
+                    if (dataHook.section === 'body' && dataHook.column.index === 0) {
+                        const itemIndex = dataHook.row.index;
+                        const url = data[itemIndex]['URL']; 
+                        
+                        if (url) {
+                            // Add link covering the cell area
+                            doc.link(
+                                dataHook.cell.x,
+                                dataHook.cell.y,
+                                dataHook.cell.width,
+                                dataHook.cell.height,
+                                { url: url }
+                            );
+                            // Do NOT manually draw text or set color here. That is handled by didParseCell and autotable's default render.
+                        }
+                    }
+                },
+                foot: [
+                    // Colspan is 4 since there are 5 columns total
+                    [{ content: 'GRAND TOTAL:', colSpan: 4, styles: { halign: 'right' } }, `$${total.toFixed(2)}`]
+                ],
+                footStyles: { fontStyle: 'bold', fillColor: [243, 244, 246], textColor: [0, 0, 0] }
+            });
+
+            // Save the PDF
+            doc.save('amazon_list_export.pdf');
+        }
+
+
+        // --- CSV Generation & Download ---
+        function convertToCSV(data) {
+            if (data.length === 0) return '';
+
+            // Ensure headers are in the desired order
+            const headers = ['Item Name', 'URL', 'ASIN Number', 'Quantity Needed', 'Unit Cost', 'Subtotal'];
+            
+            // 1. Create the CSV header row
+            const csv = [
+                headers.join(',')
+            ];
+
+            // 2. Add data rows
+            data.forEach(row => {
+                const values = headers.map(header => {
+                    let value = row[header];
+                    
+                    // Sanitize values for CSV
+                    if (typeof value === 'string') {
+                        // Escape internal double quotes by doubling them
+                        value = value.replace(/"/g, '""'); 
+                        // Enclose the entire string in double quotes if it contains commas
+                        if (value.includes(',')) {
+                            value = `"${value}"`;
+                        }
+                    }
+                    return value;
+                });
+                csv.push(values.join(','));
+            });
+
+            return csv.join('\n');
+        }
+
+        function downloadCSV(csvString) {
+            const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'amazon_list_export.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // --- Event Listeners ---
+
+        processButton.addEventListener('click', () => {
+            const rawHtml = htmlInput.value.trim();
+            downloadCsvButton.disabled = true;
+            downloadPdfButton.disabled = true;
+            resultsSummary.classList.add('hidden');
+            statusMessage.classList.add('hidden');
+
+            if (rawHtml.length < 500) {
+                showStatus('Please paste the complete raw HTML source code, it appears too short.', true);
+                return;
+            }
+
+            extractedData = extractListItems(rawHtml);
+            const grandTotal = extractListItems.grandTotal || 0;
+
+            if (extractedData.length > 0) {
+                showStatus(`Success! Found ${extractedData.length} items. Ready for download.`);
+                itemCountSpan.textContent = extractedData.length;
+                
+                // Update new total price display
+                document.getElementById('totalPrice').textContent = `$${grandTotal.toFixed(2)}`;
+                
+                resultsSummary.classList.remove('hidden');
+                downloadCsvButton.disabled = false;
+                downloadPdfButton.disabled = false;
+            } else {
+                showStatus('Extraction failed. 0 items found. The HTML structure might have changed, or the input was incorrect.', true);
+            }
+        });
+
+        downloadCsvButton.addEventListener('click', () => {
+            if (extractedData.length > 0) {
+                const csvContent = convertToCSV(extractedData);
+                downloadCSV(csvContent);
+                showStatus('CSV download initiated. Check your downloads folder.', false);
+            } else {
+                showStatus('No data to download. Please process the list first.', true);
+            }
+        });
+
+        downloadPdfButton.addEventListener('click', () => {
+            if (extractedData.length > 0) {
+                const grandTotal = extractListItems.grandTotal || 0;
+                downloadPDF(extractedData, grandTotal);
+                showStatus('PDF download initiated. Check your downloads folder.', false);
+            } else {
+                showStatus('No data to download. Please process the list first.', true);
+            }
+        });
+
+    </script>
+</body>
+</html>
