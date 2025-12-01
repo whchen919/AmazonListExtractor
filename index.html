@@ -15,6 +15,7 @@
         /* Simple utility classes for status messages */
         .status-success { background-color: #d1fae5; color: #065f46; border: 1px solid #34d399; }
         .status-error { background-color: #fee2e2; color: #991b1b; border: 1px solid #f87171; }
+        .status-warning { background-color: #fef3c7; color: #b45309; border: 1px solid #fbbf24; }
     </style>
 </head>
 <body class="p-4 sm:p-8 min-h-screen flex flex-col items-center">
@@ -36,7 +37,7 @@
                 <li>Go to the Amazon shopping list/wishlist page.</li>
                 <li>**CRITICAL:** Scroll completely to the bottom to ensure all items are loaded.</li>
                 <li>Right-click anywhere on the page, select "Inspect" to open Developer Tools.</li>
-                <li>In the "Elements" tab, find the "body" section, right-click it, and select **Copy** -> **Copy outerHTML**.</li>
+                <li>In the "Elements" tab, find the body section, right-click it, and select **Copy** -> **Copy outerHTML**.</li>
                 <li>Paste the copied HTML into the text area below and click "Process List".</li>
             </ol>
         </div>
@@ -85,10 +86,28 @@
         let extractedData = [];
 
         // Utility function to display status messages
-        function showStatus(message, isError = false) {
+        function showStatus(message, isWarning = false, isError = false) {
             statusMessage.textContent = message;
-            statusMessage.className = `mt-6 p-3 rounded-lg text-sm ${isError ? 'status-error' : 'status-success'}`;
+            
+            let statusClass = 'status-success';
+            if (isError) {
+                statusClass = 'status-error';
+            } else if (isWarning) {
+                statusClass = 'status-warning';
+            }
+
+            statusMessage.className = `mt-6 p-3 rounded-lg text-sm ${statusClass}`;
             statusMessage.classList.remove('hidden');
+        }
+
+        // Helper to sanitize a string for use in a file name
+        function sanitizeFilename(name) {
+            // Replace non-alphanumeric/whitespace chars with underscore, limit length, and trim
+            return name
+                .replace(/[^a-z0-9\s]/gi, '_')
+                .trim()
+                .toLowerCase()
+                .substring(0, 50);
         }
 
         // --- Core Logic: HTML Parsing ---
@@ -126,6 +145,7 @@
 
             const amazonBaseUrl = 'https://www.amazon.com';
             let grandTotal = 0; // Initialize grand total calculation
+            let unavailableCount = 0; // Initialize count for unavailable items
 
             itemElements.forEach(itemEl => {
                 try {
@@ -145,11 +165,10 @@
                     // 3. Quantity 
                     let quantity = 1; 
 
-                    // Priority A: Check if the main list item container has a data-quantity attribute
+                    // ... (Quantity extraction logic)
                     if (itemEl.hasAttribute('data-quantity')) {
                         quantity = parseInt(itemEl.getAttribute('data-quantity'), 10) || 1;
                     } else {
-                        // Priority B: Search for specific quantity display elements
                         let quantityEl = itemEl.querySelector(
                             'span[id^="itemRequested_"], ' + 
                             'span[id^="itemQuantity_"], ' + 
@@ -163,8 +182,8 @@
                             let qtyText = (quantityEl.value || quantityEl.textContent).trim();
                             let match = qtyText.match(/(\d+)/); 
                             quantity = match ? parseInt(match[1], 10) : 1;
+                            if (quantity === 0) quantity = 1; 
                         } else {
-                            // Priority C: Fallback to searching the entire item text
                             const itemText = itemEl.textContent;
                             const textMatch = itemText.match(/(Quantity|Qty|Needed|Needs):\s*(\d+)/i);
                             if (textMatch) {
@@ -173,37 +192,44 @@
                         }
                     }
 
-                    // 4. Unit Cost (Price) - *** ENHANCED PRICE EXTRACTION LOGIC ***
+
+                    // 4. Status Check: Check for 'unavailable' phrases
+                    let isUnavailable = false;
+                    let statusEl = itemEl.querySelector('[id^="item-status-message"], .a-alert-content, .item-unavailable');
+                    if (statusEl) {
+                         const statusText = statusEl.textContent.toLowerCase();
+                         if (statusText.includes('unavailable') || statusText.includes('out of stock') || statusText.includes('not available')) {
+                             isUnavailable = true;
+                             unavailableCount++; // Increment counter
+                         }
+                    }
+
+
+                    // 5. Unit Cost (Price)
                     let unitCost = 0;
                     
-                    let priceEl = itemEl.querySelector(
-                        'span[id^="itemPrice_"], ' + 
-                        'span.a-price span.a-offscreen, ' + 
-                        'span.a-color-price' 
-                    );
+                    if (!isUnavailable) { // Only try to parse price if it's not marked unavailable
+                        let priceEl = itemEl.querySelector(
+                            'span[id^="itemPrice_"], ' + 
+                            'span.a-price span.a-offscreen, ' + 
+                            'span.a-color-price' 
+                        );
 
-                    if (priceEl) {
-                        // Regex to safely extract the standard currency number pattern (e.g., 1,234.56 or 58.99)
-                        // This prevents non-numeric characters (like currency symbols, trailing text) from interfering.
-                        const priceMatch = priceEl.textContent.trim().match(/(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/);
-                        
-                        if (priceMatch && priceMatch[1]) {
-                            // 1. Capture the matched number string (e.g., "58.99" or "1,200.00")
-                            let priceString = priceMatch[1];
+                        if (priceEl) {
+                            const priceMatch = priceEl.textContent.trim().match(/(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/);
                             
-                            // 2. Remove thousands comma for correct JavaScript parsing
-                            const sanitizedPrice = priceString.replace(/,/g, ''); 
-                            
-                            // 3. Convert to float, defaulting to 0
-                            unitCost = parseFloat(sanitizedPrice) || 0;
-                        } else {
-                            // Fallback for unexpected formats (less precise, but handles simple cases)
-                            const priceText = priceEl.textContent.trim().replace(/[^\d.]/g, '');
-                            unitCost = parseFloat(priceText) || 0;
+                            if (priceMatch && priceMatch[1]) {
+                                let priceString = priceMatch[1];
+                                const sanitizedPrice = priceString.replace(/,/g, ''); 
+                                unitCost = parseFloat(sanitizedPrice) || 0;
+                            } else {
+                                const priceText = priceEl.textContent.trim().replace(/[^\d.]/g, '');
+                                unitCost = parseFloat(priceText) || 0;
+                            }
                         }
                     }
 
-                    // 5. Subtotal Calculation
+                    // 6. Subtotal Calculation
                     const subtotal = unitCost * quantity;
                     grandTotal += subtotal;
 
@@ -214,8 +240,10 @@
                             'URL': url,
                             'ASIN Number': asin,
                             'Quantity Needed': quantity,
-                            'Unit Cost': unitCost.toFixed(2), // Format to 2 decimal places
-                            'Subtotal': subtotal.toFixed(2)  // Format to 2 decimal places
+                            // Display 'N/A' if unavailable, otherwise display the cost
+                            'Unit Cost': isUnavailable ? 'N/A' : unitCost.toFixed(2), 
+                            'Subtotal': subtotal.toFixed(2)
+                            // REMOVED Status field
                         });
                     }
 
@@ -225,17 +253,18 @@
                 }
             });
             
-            // Attach grand total to the result set for display in the UI
+            // Attach counts/totals to the result set for use in the UI
             extractListItems.grandTotal = grandTotal;
+            extractListItems.unavailableCount = unavailableCount;
 
             return extractedData;
         }
         
-        // --- PDF Generation (UPDATED: Fixed double text bug using didParseCell) ---
+        // --- PDF Generation ---
         function downloadPDF(data, total) {
             const listName = extractListItems.listName || 'Amazon Shopping List Export';
             const fileName = sanitizeFilename(listName);
-            
+
             // Retrieve jsPDF library from the window object
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF('p', 'mm', 'a4'); // Portrait, mm units, A4 size
@@ -249,18 +278,19 @@
             doc.setFont('helvetica', 'normal');
             doc.setFontSize(10);
             doc.text(`Total Items Extracted: ${data.length}`, 14, 28);
-            doc.text(`List Grand Total: $${total.toFixed(2)}`, 14, 34);
+            doc.text(`List Grand Total (Excluding N/A Items): $${total.toFixed(2)}`, 14, 34);
 
             // Prepare table data
             const headers = [
-                ['Item Name', 'ASIN', 'Qty', 'Unit Cost', 'Subtotal'] 
+                ['Item Name', 'ASIN', 'Qty', 'Unit Cost', 'Subtotal'] // REMOVED Status header
             ];
             
             const body = data.map(item => [
                 item['Item Name'],
                 item['ASIN Number'], 
                 item['Quantity Needed'],
-                `$${item['Unit Cost']}`,
+                // Handle 'N/A' for unit cost display
+                item['Unit Cost'] === 'N/A' ? 'N/A' : `$${item['Unit Cost']}`,
                 `$${item['Subtotal']}`
             ]);
 
@@ -273,20 +303,25 @@
                 headStyles: { fillColor: [79, 70, 229] }, // indigo-600
                 styles: { fontSize: 8, overflow: 'linebreak' },
                 columnStyles: {
-                    // REDUCED Item Name width from 75 to 60 to definitively ensure the entire table fits on the page.
-                    0: { cellWidth: 100 }, // Item Name 
+                    // Recalculated widths for 5 columns (180mm total)
+                    0: { cellWidth: 100 }, // Item Name (increased)
                     1: { cellWidth: 25 }, // ASIN Number
                     2: { halign: 'center', cellWidth: 15 }, // Qty
-                    3: { halign: 'right', cellWidth: 20 }, // Unit Cost
-                    4: { halign: 'right', cellWidth: 20 }  // Subtotal
+                    3: { halign: 'right', cellWidth: 30 }, // Unit Cost (increased)
+                    4: { halign: 'right', cellWidth: 35 }    // Subtotal (increased)
                 },
                 
-                // Use didParseCell to set text color before drawing, preventing double draw
+                // Use didParseCell to set text color before drawing, including 'N/A' unit cost
                 didParseCell: function (dataHook) {
-                    // Apply blue text color and underline-like effect to the Item Name column (index 0)
+                    // Apply blue text color to Item Name column (index 0)
                     if (dataHook.section === 'body' && dataHook.column.index === 0) {
                         dataHook.cell.styles.textColor = [0, 0, 255]; // Blue text
-                        dataHook.cell.styles.fontStyle = 'normal'; // Resetting any default bold style
+                        dataHook.cell.styles.fontStyle = 'normal';
+                    }
+                    // Highlight 'N/A' unit cost (index 3) in red to indicate unavailable item
+                    if (dataHook.section === 'body' && dataHook.column.index === 3 && dataHook.cell.raw === 'N/A') {
+                        dataHook.cell.styles.textColor = [220, 38, 38]; // Red
+                        dataHook.cell.styles.fontStyle = 'bold';
                     }
                 },
                 
@@ -306,19 +341,18 @@
                                 dataHook.cell.height,
                                 { url: url }
                             );
-                            // Do NOT manually draw text or set color here. That is handled by didParseCell and autotable's default render.
                         }
                     }
                 },
                 foot: [
-                    // Colspan is 4 since there are 5 columns total
+                    // Colspan is 4 for the remaining 5 columns
                     [{ content: 'GRAND TOTAL:', colSpan: 4, styles: { halign: 'right' } }, `$${total.toFixed(2)}`]
                 ],
                 footStyles: { fontStyle: 'bold', fillColor: [243, 244, 246], textColor: [0, 0, 0] }
             });
 
-            // Save the PDF
-            doc.save('amazon_list_export.pdf');
+            // Save the PDF with the list name
+            doc.save(`${fileName}.pdf`);
         }
 
 
@@ -326,7 +360,7 @@
         function convertToCSV(data) {
             if (data.length === 0) return '';
 
-            // Ensure headers are in the desired order
+            // Ensure headers are in the desired order (REMOVED Status)
             const headers = ['Item Name', 'URL', 'ASIN Number', 'Quantity Needed', 'Unit Cost', 'Subtotal'];
             
             // 1. Create the CSV header row
@@ -359,12 +393,12 @@
         function downloadCSV(csvString) {
             const listName = extractListItems.listName || 'Amazon Shopping List Export';
             const fileName = sanitizeFilename(listName);
-            
+
             const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${fileName}.csv`;
+            a.download = `${fileName}.csv`; // Use list name for filename
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -387,9 +421,19 @@
 
             extractedData = extractListItems(rawHtml);
             const grandTotal = extractListItems.grandTotal || 0;
+            const listName = extractListItems.listName || 'List';
+            const unavailableCount = extractListItems.unavailableCount || 0;
 
             if (extractedData.length > 0) {
-                showStatus(`Success! Found ${extractedData.length} items. Ready for download.`);
+                let successMessage = `Success! Found ${extractedData.length} items from list "${listName}". Ready for download.`;
+                let isWarning = false;
+                
+                if (unavailableCount > 0) {
+                    isWarning = true;
+                    successMessage += ` WARNING: ${unavailableCount} item${unavailableCount === 1 ? ' is' : 's are'} marked as Unavailable and their costs were ignored in the Grand Total calculation. Check the 'Unit Cost' column for 'N/A' items in the exports.`;
+                }
+
+                showStatus(successMessage, isWarning);
                 itemCountSpan.textContent = extractedData.length;
                 
                 // Update new total price display
